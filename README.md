@@ -12,8 +12,14 @@ Requires WinRT and Windows 10. Does not work on any version before Windows 10 Cr
 ## Running
 Running KonamiControllerFeeder.exe without a parameter will default to vJoy device 1.
 
-You can optionally specify the device ID after KonamiControllerFeeder.exe, like so: `KonamiControllerFeeder.exe 4`.
+There are various parameters you can adjust by specifying them as arguments when executing the program:
+```
+usage: KonamiControllerFeeder.exe [--sensitivity-x 1.0] [--sensitivity-y 1.0] [--device-id 1] [--digital] [--help]
 
-
-## TODO
-- [ ] Add a way to adjust sensitivity of turntable and knobs
+arguments:
+        --device-id (val) - Set the target vJoy device ID
+        --sensitivity-x (val) - Set the sensitivity of the X axis for analog mode
+        --sensitivity-y (val) - Set the sensitivity of the Y axis for analog mode
+        --digital - Turn X and Y axis values into digital instead of analog values. Useful for BMS simulators.
+        --help - Display this help message
+```
