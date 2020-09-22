@@ -184,41 +184,41 @@ concurrency::task<void> connectToController(unsigned long long bluetoothAddress)
 int main(Array<String^>^ args) {
 	Microsoft::WRL::Wrappers::RoInitializeWrapper initialize(RO_INIT_MULTITHREADED);
 
-	// TODO: Add a proper command line argument parser
-	// --sensitivity-x (val)
-	// --sensitivity-y (val)
-	// --dev-id (val)
-	// --digital (sets digital flag to 1)
-
-	auto argIdx = 0;
+	auto argIdx = 1;
 	while (argIdx < args->Length) {
 		auto arg = args[argIdx++];
 
-		std::wcout << arg->Data() << std::endl;
-		if (arg == "--device-id" && argIdx + 1 < args->Length) {
+		if (arg == "--help") {
+			std::wcout << "usage: " << args[0]->Data() << " [--sensitivity-x 1.0] [--sensitivity-y 1.0] [--device-id 1] [--digital] [--help]" << std::endl;
+			std::wcout << std::endl;
+			std::wcout << "arguments:" << std::endl;
+			std::wcout << "\t--device-id (val) - Set the target vJoy device ID" << std::endl;
+			std::wcout << "\t--sensitivity-x (val) - Set the sensitivity of the X axis for analog mode" << std::endl;
+			std::wcout << "\t--sensitivity-y (val) - Set the sensitivity of the Y axis for analog mode" << std::endl;
+			std::wcout << "\t--digital - Turn X and Y axis values into digital instead of analog values. Useful for BMS simulators." << std::endl;
+			std::wcout << "\t--help - Display this help message" << std::endl;
+			std::wcout << std::endl;
+			return 0;
+		}
+		else if (arg == "--device-id" && argIdx < args->Length) {
 			auto param = args[argIdx++];
 			vjoyDevId = _wtoi(param->Data());
 		}
-		else if (arg == "--sensitivity-x" && argIdx + 1 < args->Length) {
+		else if (arg == "--sensitivity-x" && argIdx < args->Length) {
 			auto param = args[argIdx++];
-			axisSensitivity[AXIS_X] = wcstod(param->Data(), 0);
+			axisSensitivity[AXIS_X] = _wtof(param->Data());
 		}
-		else if (arg == "--sensitivity-y" && argIdx + 1 < args->Length) {
+		else if (arg == "--sensitivity-y" && argIdx < args->Length) {
 			auto param = args[argIdx++];
-			axisSensitivity[AXIS_Y] = wcstod(param->Data(), 0);
+			axisSensitivity[AXIS_Y] = _wtof(param->Data());
 		}
 		else if (arg == "--digital") {
 			isDigital = true;
 		}
-		else if (arg == "--help") {
-			// TODO: Print help message
-		}
 		else {
-			std::wcout << "Unknown argument!" << std::endl;
+			std::wcout << "Unknown argument!" << arg->Data() << std::endl;
 		}
 	}
-
-	std::wcout << "Using vJoy device ID: " << vjoyDevId << std::endl;
 
 	CoInitializeSecurity(
 		nullptr,
@@ -231,6 +231,8 @@ int main(Array<String^>^ args) {
 		EOAC_NONE,
 		nullptr
 	);
+
+	std::wcout << "Using vJoy device ID: " << vjoyDevId << std::endl;
 
 	if (!vJoyEnabled()) {
 		wprintf(L"Function vJoyEnabled Failed - make sure that vJoy is installed and enabled\n");
