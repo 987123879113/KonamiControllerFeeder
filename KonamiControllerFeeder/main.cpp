@@ -11,6 +11,11 @@
 
 #include <vjoyinterface.h>
 
+#define AXIS_X 0
+#define AXIS_Y (AXIS_X + 1)
+
+#define UPDATE_FRAME_DELTA 1
+
 using namespace Platform;
 using namespace Windows::Devices;
 using namespace Windows::Storage;
@@ -32,6 +37,15 @@ std::wstring formatBluetoothAddress(unsigned long long bluetoothAddress) {
 		<< std::setw(2) << ((bluetoothAddress >> (0 * 8)) & 0xff);
 	return ret.str();
 }
+
+int lastRawValue[2] = { 0 };
+int currentValue[2] = { 0 };
+int lastValue[2] = { 0 };
+bool initAxis[2] = { false };
+double axisSensitivity[2] = { 2.0, 0.50 };
+int lastUpdateFrame = -1;
+
+bool isDigital = false;
 
 concurrency::task<void> connectToController(unsigned long long bluetoothAddress) {
 	auto leDevice = co_await Bluetooth::BluetoothLEDevice::FromBluetoothAddressAsync(bluetoothAddress);
@@ -104,8 +118,57 @@ concurrency::task<void> connectToController(unsigned long long bluetoothAddress)
 				for (auto idx = 0; idx < data.size(); idx += 5) {
 					JOYSTICK_POSITION iReport = {};
 					iReport.bDevice = (BYTE)vjoyDevId;
-					iReport.wAxisX = (LONG)std::round(((double)data[idx] / 255.0) * 32768.0); // Turntable, or VOL-L
-					iReport.wAxisY = (LONG)std::round(((double)data[idx + 1] / 255.0) * 32768.0); // VOL-R
+
+					if (isDigital) {
+						auto frameOverflow = abs(lastUpdateFrame - data[idx + 4]) > 200;
+						if (lastUpdateFrame == -1 || (data[idx + 4] - lastUpdateFrame > UPDATE_FRAME_DELTA) || (frameOverflow && (data[idx + 4] - lastUpdateFrame) < UPDATE_FRAME_DELTA)) {
+							for (auto axisIdx = 0; axisIdx <= AXIS_Y - AXIS_X; axisIdx++) {
+								if (!initAxis[AXIS_X + axisIdx]) {
+									lastRawValue[AXIS_X + axisIdx] = data[idx + axisIdx];
+									initAxis[AXIS_X + axisIdx] = true;
+								}
+
+								auto newValue = data[idx + axisIdx]; // Turntable, or VOL-L
+								auto underflow = abs(lastRawValue[AXIS_X + axisIdx] - newValue) > 200;
+								auto nextValue = 0;
+
+								if (underflow) {
+									if (lastRawValue[AXIS_X + axisIdx] - newValue < 0) {
+										nextValue = 0;
+									}
+									else if (lastRawValue[AXIS_X + axisIdx] - newValue > 0) {
+										nextValue = 32768;
+									}
+									else {
+										nextValue = 32768 / 2;
+									}
+								}
+								else {
+									if (lastRawValue[AXIS_X + axisIdx] - newValue > 0) {
+										nextValue = 0;
+									}
+									else if (lastRawValue[AXIS_X + axisIdx] - newValue < 0) {
+										nextValue = 32768;
+									}
+									else {
+										nextValue = 32768 / 2;
+									}
+								}
+
+								lastRawValue[AXIS_X + axisIdx] = newValue;
+								currentValue[AXIS_X + axisIdx] = nextValue;
+								lastUpdateFrame = data[idx + 4];
+							}
+						}
+					}
+					else {
+						// TODO: Do something with sensitivity here
+						currentValue[AXIS_X] = (LONG)std::round(((double)data[idx] / 255.0) * 32768.0); // Turntable, or VOL-L
+						currentValue[AXIS_Y] = (LONG)std::round(((double)data[idx + 1] / 255.0) * 32768.0); // VOL-R
+					}
+
+					iReport.wAxisX = currentValue[AXIS_X];
+					iReport.wAxisY = currentValue[AXIS_Y];
 					iReport.lButtons = data[idx + 2] | (data[idx + 3] << 8);
 
 					// Send position data to vJoy device
@@ -122,6 +185,11 @@ concurrency::task<void> connectToController(unsigned long long bluetoothAddress)
 int main(Array<String^>^ args) {
 	Microsoft::WRL::Wrappers::RoInitializeWrapper initialize(RO_INIT_MULTITHREADED);
 
+	// TODO: Add a proper command line argument parser
+	// --sensitivity-x (val)
+	// --sensitivity-y (val)
+	// --dev-id (val)
+	// --digital (sets digital flag to 1)
 	if (args->Length > 1) {
 		// Specify vJoy device ID
 		vjoyDevId = _wtoi(args[1]->Data());
