@@ -189,9 +189,33 @@ int main(Array<String^>^ args) {
 	// --sensitivity-y (val)
 	// --dev-id (val)
 	// --digital (sets digital flag to 1)
-	if (args->Length > 1) {
-		// Specify vJoy device ID
-		vjoyDevId = _wtoi(args[1]->Data());
+
+	auto argIdx = 0;
+	while (argIdx < args->Length) {
+		auto arg = args[argIdx++];
+
+		std::wcout << arg->Data() << std::endl;
+		if (arg == "--device-id" && argIdx + 1 < args->Length) {
+			auto param = args[argIdx++];
+			vjoyDevId = _wtoi(param->Data());
+		}
+		else if (arg == "--sensitivity-x" && argIdx + 1 < args->Length) {
+			auto param = args[argIdx++];
+			axisSensitivity[AXIS_X] = wcstod(param->Data(), 0);
+		}
+		else if (arg == "--sensitivity-y" && argIdx + 1 < args->Length) {
+			auto param = args[argIdx++];
+			axisSensitivity[AXIS_Y] = wcstod(param->Data(), 0);
+		}
+		else if (arg == "--digital") {
+			isDigital = true;
+		}
+		else if (arg == "--help") {
+			// TODO: Print help message
+		}
+		else {
+			std::wcout << "Unknown argument!" << std::endl;
+		}
 	}
 
 	std::wcout << "Using vJoy device ID: " << vjoyDevId << std::endl;
