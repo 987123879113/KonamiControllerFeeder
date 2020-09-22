@@ -42,7 +42,7 @@ int lastRawValue[2] = { 0 };
 int currentValue[2] = { 0 };
 int lastValue[2] = { 0 };
 bool initAxis[2] = { false };
-double axisSensitivity[2] = { 2.0, 0.50 };
+double axisSensitivity[2] = { 1.0, 1.0 };
 int lastUpdateFrame = -1;
 
 bool isDigital = false;
@@ -162,9 +162,8 @@ concurrency::task<void> connectToController(unsigned long long bluetoothAddress)
 						}
 					}
 					else {
-						// TODO: Do something with sensitivity here
-						currentValue[AXIS_X] = (LONG)std::round(((double)data[idx] / 255.0) * 32768.0); // Turntable, or VOL-L
-						currentValue[AXIS_Y] = (LONG)std::round(((double)data[idx + 1] / 255.0) * 32768.0); // VOL-R
+						currentValue[AXIS_X] = (LONG)std::round((((double)data[idx] * axisSensitivity[AXIS_X]) / 255.0) * 32768.0) % 32768; // Turntable, or VOL-L
+						currentValue[AXIS_Y] = (LONG)std::round((((double)data[idx + 1] * axisSensitivity[AXIS_Y]) / 255.0) * 32768.0) % 32768; // VOL-R
 					}
 
 					iReport.wAxisX = currentValue[AXIS_X];
