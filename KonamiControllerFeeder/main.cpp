@@ -20,8 +20,19 @@ using namespace Platform;
 using namespace Windows::Devices;
 using namespace Windows::Storage;
 
+enum DeviceType {
+	UNKNOWN,
+	IIDX,
+	SDVX,
+	POPN,
+	GITADORA_GUITAR,
+};
+
 String^ targetDeviceIidx = L"IIDX Entry model";
 String^ targetDeviceSdvx = L"SDVX Entry Model";
+String^ targetDevicePopn = L"Pop'n controller";
+String^ targetDeviceGitadoraGuitar = L"GITADORA controller"; // TODO: Temporary until real name is known
+
 auto serviceUUID = Bluetooth::BluetoothUuidHelper::FromShortId(0xff00);
 auto characteristicUUID = Bluetooth::BluetoothUuidHelper::FromShortId(0xff01);
 auto vjoyDevId = 1; // Default to device ID 1, but let the user specify a different device ID later
@@ -47,17 +58,39 @@ int lastUpdateFrame = -1;
 
 bool isDigital = false;
 
-concurrency::task<void> connectToController(unsigned long long bluetoothAddress) {
+concurrency::task<bool> isValidController(unsigned long long bluetoothAddress) {
 	auto leDevice = co_await Bluetooth::BluetoothLEDevice::FromBluetoothAddressAsync(bluetoothAddress);
 	auto servicesResult = co_await leDevice->GetGattServicesForUuidAsync(serviceUUID);
+	co_return servicesResult->Status == Windows::Devices::Bluetooth::GenericAttributeProfile::GattCommunicationStatus::Success;
+}
+
+concurrency::task<void> connectToController(unsigned long long bluetoothAddress, String^ deviceName) {
+	auto leDevice = co_await Bluetooth::BluetoothLEDevice::FromBluetoothAddressAsync(bluetoothAddress);
+	auto servicesResult = co_await leDevice->GetGattServicesForUuidAsync(serviceUUID);
+
 	auto service = servicesResult->Services->GetAt(0);
 	auto characteristicsResult = co_await service->GetCharacteristicsForUuidAsync(characteristicUUID);
 	auto characteristic = characteristicsResult->Characteristics->GetAt(0);
 
 	auto status = co_await characteristic->WriteClientCharacteristicConfigurationDescriptorAsync(Bluetooth::GenericAttributeProfile::GattClientCharacteristicConfigurationDescriptorValue::Notify);
 
+	DeviceType deviceType = DeviceType::UNKNOWN;
+
+	if (deviceName == targetDeviceIidx) {
+		deviceType = DeviceType::IIDX;
+	}
+	else if (deviceName == targetDeviceSdvx) {
+		deviceType = DeviceType::SDVX;
+	}
+	else if (deviceName == targetDevicePopn) {
+		deviceType = DeviceType::POPN;
+	}
+	else if (deviceName == targetDeviceGitadoraGuitar) {
+		deviceType = DeviceType::GITADORA_GUITAR;
+	}
+
 	characteristic->ValueChanged += ref new Windows::Foundation::TypedEventHandler<Bluetooth::GenericAttributeProfile::GattCharacteristic^, Bluetooth::GenericAttributeProfile::GattValueChangedEventArgs^>(
-		[characteristic](Bluetooth::GenericAttributeProfile::GattCharacteristic^ gattCharacteristic, Bluetooth::GenericAttributeProfile::GattValueChangedEventArgs^ eventArgs) {
+		[characteristic, deviceType](Bluetooth::GenericAttributeProfile::GattCharacteristic^ gattCharacteristic, Bluetooth::GenericAttributeProfile::GattValueChangedEventArgs^ eventArgs) {
 			auto reader = Streams::DataReader::FromBuffer(eventArgs->CharacteristicValue);
 			std::vector<unsigned char> data(reader->UnconsumedBufferLength);
 
@@ -66,8 +99,8 @@ concurrency::task<void> connectToController(unsigned long long bluetoothAddress)
 
 				/*
 				IIDX:
-				Notification packet:
-				aa xx bb cc dd aa xx bb cc dd
+				Notification packet (5 bytes):
+				aa xx bb cc zz
 
 				aa = unsigned byte, turntable value
 				Spinning the turntable counter-clockwise increases the value, clockwise decreases the value
@@ -87,13 +120,13 @@ concurrency::task<void> connectToController(unsigned long long bluetoothAddress)
 				0x01 E1
 				0x02 E2
 
-				dd = frame count, unsigned byte
+				zz = frame count, unsigned byte
 
 				---
 
 				SDVX:
-				Notification packet:
-				ll rr bb cc dd ll rr bb cc dd
+				Notification packet (5 bytes):
+				ll rr bb cc zz
 
 				ll = unsigned byte, VOL-L knob
 				Clockwise increases value, counter-clockwise decreases value
@@ -112,63 +145,134 @@ concurrency::task<void> connectToController(unsigned long long bluetoothAddress)
 				cc =
 				0x01 Start
 
-				dd = frame count, unsigned byte
+				zz = frame count, unsigned byte
+
+				---
+
+				pop'n music:
+				Notification packet (6 bytes):
+				aa bb cc dd ee zz
+
+				aa =
+				0x01 Button 1
+				0x02 Button 2
+				0x04 Button 3
+				0x08 Button 4
+				0x10 Button 5
+				0x20 Button 6
+				0x40 Button 7
+				0x80 Button 8
+
+				bb =
+				0x01 Button 9
+				0x20 Start
+				0x04 Select
+
+				cc = X Axis?
+				dd = Y Axis?
+				ee = Z Axis?
+
+				zz = frame count, unsigned byte
+
+				---
+
+				GITADORA (Guitar):
+				Notification packet (6? bytes):
+				aa bb cc dd ee zz?
+
+				aa =
+				0x01 Button 1?
+				0x02 Button 2?
+				0x04 Button 3?
+				0x08 Button 4?
+				0x10 Button 5?
+				0x20 Start?
+				0x40 Select?
+
+				bb = 00?
+
+				cc = X Axis?
+				dd = Y Axis?
+				ee = Z Axis?
+
+				zz = frame count, unsigned byte
 				*/
 
-				for (auto idx = 0; idx < data.size(); idx += 5) {
+				int packetLen = 5; // IIDX and SDVX
+				if (deviceType == DeviceType::POPN || deviceType == DeviceType::GITADORA_GUITAR) {
+					// pop'n music is a stream of packets with a size of 6 byte per packet
+					packetLen = 6;
+				}
+
+				for (auto idx = 0; idx < data.size(); idx += packetLen) {
 					JOYSTICK_POSITION iReport = {};
 					iReport.bDevice = (BYTE)vjoyDevId;
 
-					if (isDigital) {
-						auto frameOverflow = abs(lastUpdateFrame - data[idx + 4]) > 200;
-						if (lastUpdateFrame == -1 || (data[idx + 4] - lastUpdateFrame > UPDATE_FRAME_DELTA) || (frameOverflow && (data[idx + 4] - lastUpdateFrame) < UPDATE_FRAME_DELTA)) {
-							for (auto axisIdx = 0; axisIdx <= AXIS_Y - AXIS_X; axisIdx++) {
-								if (!initAxis[AXIS_X + axisIdx]) {
-									lastRawValue[AXIS_X + axisIdx] = data[idx + axisIdx];
-									initAxis[AXIS_X + axisIdx] = true;
-								}
+					for (int i = 0; i < packetLen; i++) {
+						printf("%02x ", data[idx + i]);
+					}
+					printf("\n");
 
-								auto newValue = data[idx + axisIdx]; // Turntable, or VOL-L
-								auto underflow = abs(lastRawValue[AXIS_X + axisIdx] - newValue) > 200;
-								auto nextValue = 0;
-
-								if (underflow) {
-									if (lastRawValue[AXIS_X + axisIdx] - newValue < 0) {
-										nextValue = 0;
-									}
-									else if (lastRawValue[AXIS_X + axisIdx] - newValue > 0) {
-										nextValue = 32768;
-									}
-									else {
-										nextValue = 32768 / 2;
-									}
-								}
-								else {
-									if (lastRawValue[AXIS_X + axisIdx] - newValue > 0) {
-										nextValue = 0;
-									}
-									else if (lastRawValue[AXIS_X + axisIdx] - newValue < 0) {
-										nextValue = 32768;
-									}
-									else {
-										nextValue = 32768 / 2;
-									}
-								}
-
-								lastRawValue[AXIS_X + axisIdx] = newValue;
-								currentValue[AXIS_X + axisIdx] = nextValue;
-								lastUpdateFrame = data[idx + 4];
-							}
-						}
+					if (deviceType == DeviceType::POPN || deviceType == DeviceType::GITADORA_GUITAR) {
+						// TODO: Not sure how to scale these values for Gitadora yet. Unused in pop'n but they exist
+						iReport.wAxisX = data[idx + 2];
+						iReport.wAxisY = data[idx + 3];
+						iReport.wAxisZ = data[idx + 4];
+						iReport.lButtons = data[idx] | (data[idx + 1] << 8);
 					}
 					else {
-						currentValue[AXIS_X] = (LONG)std::round((((double)data[idx] * axisSensitivity[AXIS_X]) / 255.0) * 32768.0) % 32768; // Turntable, or VOL-L
-						currentValue[AXIS_Y] = (LONG)std::round((((double)data[idx + 1] * axisSensitivity[AXIS_Y]) / 255.0) * 32768.0) % 32768; // VOL-R
-					}
+						// IIDX and SDVX have the same format
+						if (isDigital) {
+							auto frameOverflow = abs(lastUpdateFrame - data[idx + 4]) > 200;
+							if (lastUpdateFrame == -1 || (data[idx + 4] - lastUpdateFrame > UPDATE_FRAME_DELTA) || (frameOverflow && (data[idx + 4] - lastUpdateFrame) < UPDATE_FRAME_DELTA)) {
+								for (auto axisIdx = 0; axisIdx <= AXIS_Y - AXIS_X; axisIdx++) {
+									if (!initAxis[AXIS_X + axisIdx]) {
+										lastRawValue[AXIS_X + axisIdx] = data[idx + axisIdx];
+										initAxis[AXIS_X + axisIdx] = true;
+									}
 
-					iReport.wAxisX = currentValue[AXIS_X];
-					iReport.wAxisY = currentValue[AXIS_Y];
-					iReport.lButtons = data[idx + 2] | (data[idx + 3] << 8);
+									auto newValue = data[idx + axisIdx]; // Turntable, or VOL-L
+									auto underflow = abs(lastRawValue[AXIS_X + axisIdx] - newValue) > 200;
+									auto nextValue = 0;
+
+									if (underflow) {
+										if (lastRawValue[AXIS_X + axisIdx] - newValue < 0) {
+											nextValue = 0;
+										}
+										else if (lastRawValue[AXIS_X + axisIdx] - newValue > 0) {
+											nextValue = 32768;
+										}
+										else {
+											nextValue = 32768 / 2;
+										}
+									}
+									else {
+										if (lastRawValue[AXIS_X + axisIdx] - newValue > 0) {
+											nextValue = 0;
+										}
+										else if (lastRawValue[AXIS_X + axisIdx] - newValue < 0) {
+											nextValue = 32768;
+										}
+										else {
+											nextValue = 32768 / 2;
+										}
+									}
+
+									lastRawValue[AXIS_X + axisIdx] = newValue;
+									currentValue[AXIS_X + axisIdx] = nextValue;
+									lastUpdateFrame = data[idx + 4];
+								}
+							}
+						}
+						else {
+							currentValue[AXIS_X] = (LONG)std::round((((double)data[idx] * axisSensitivity[AXIS_X]) / 255.0) * 32768.0) % 32768; // Turntable, or VOL-L
+							currentValue[AXIS_Y] = (LONG)std::round((((double)data[idx + 1] * axisSensitivity[AXIS_Y]) / 255.0) * 32768.0) % 32768; // VOL-R
+						}
+
+						iReport.wAxisX = currentValue[AXIS_X];
+						iReport.wAxisY = currentValue[AXIS_Y];
+						iReport.lButtons = data[idx + 2] | (data[idx + 3] << 8);
+					}
 
 					// Send position data to vJoy device
 					if (!UpdateVJD(vjoyDevId, &iReport)) {
@@ -271,20 +375,26 @@ int main(Array<String^>^ args) {
 	bleAdvertisementWatcher->ScanningMode = Bluetooth::Advertisement::BluetoothLEScanningMode::Active;
 	bleAdvertisementWatcher->Received += ref new Windows::Foundation::TypedEventHandler<Bluetooth::Advertisement::BluetoothLEAdvertisementWatcher^, Bluetooth::Advertisement::BluetoothLEAdvertisementReceivedEventArgs^>(
 		[bleAdvertisementWatcher](Bluetooth::Advertisement::BluetoothLEAdvertisementWatcher^ watcher, Bluetooth::Advertisement::BluetoothLEAdvertisementReceivedEventArgs^ eventArgs) {
-			if (eventArgs->Advertisement->LocalName != targetDeviceIidx && eventArgs->Advertisement->LocalName != targetDeviceSdvx) {
+			if (eventArgs->Advertisement->LocalName != targetDeviceIidx 
+				&& eventArgs->Advertisement->LocalName != targetDeviceSdvx
+				&& eventArgs->Advertisement->LocalName != targetDevicePopn
+				&& eventArgs->Advertisement->LocalName != targetDeviceGitadoraGuitar) {
+				std::wcout << "Skipping device: \"" << eventArgs->Advertisement->LocalName->Data() << "\"" << std::endl;
 				return;
 			}
 
-			auto serviceUuids = eventArgs->Advertisement->ServiceUuids;
+			String^ strAddress = ref new String(formatBluetoothAddress(eventArgs->BluetoothAddress).c_str());
 
-			unsigned int index = -1;
-			if (serviceUuids->IndexOf(serviceUUID, &index)) {
-				String^ strAddress = ref new String(formatBluetoothAddress(eventArgs->BluetoothAddress).c_str());
+			auto isValid = isValidController(eventArgs->BluetoothAddress);
+			if (isValid.get()) {
 				std::wcout << "Target service found on device: " << strAddress->Data() << " " << eventArgs->Advertisement->LocalName->Data() << std::endl;
 
 				bleAdvertisementWatcher->Stop();
 
-				connectToController(eventArgs->BluetoothAddress);
+				connectToController(eventArgs->BluetoothAddress, eventArgs->Advertisement->LocalName);
+			}
+			else {
+				std::wcout << "Target service NOT found on device: " << strAddress->Data() << " " << eventArgs->Advertisement->LocalName->Data() << std::endl;
 			}
 		});
 	bleAdvertisementWatcher->Start();

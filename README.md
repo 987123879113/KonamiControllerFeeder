@@ -1,8 +1,8 @@
 # KonamiControllerFeeder
-vJoy Feeder program for Konami's IIDX and SDVX entry model controllers
+vJoy Feeder program for Konami's IIDX and SDVX entry model and pop'n music premium model controllers
 
 ## Setup
-Create a joystick in vJoyConf with 10 buttons, the X axis, and the Y axis available. No other buttons are required.
+Create a joystick in vJoyConf with 16 buttons, the X, Y, and Z axis available. No other buttons are required.
 
 ## Building
 Recommended to use the latest version of Visual Studio Community 2019.
@@ -18,8 +18,8 @@ usage: KonamiControllerFeeder.exe [--sensitivity-x 1.0] [--sensitivity-y 1.0] [-
 
 arguments:
         --device-id (val) - Set the target vJoy device ID
-        --sensitivity-x (val) - Set the sensitivity of the X axis for analog mode
-        --sensitivity-y (val) - Set the sensitivity of the Y axis for analog mode
+        --sensitivity-x (val) - Set the sensitivity of the X axis for analog mode (for IIDX and SDVX)
+        --sensitivity-y (val) - Set the sensitivity of the Y axis for analog mode (for IIDX and SDVX)
         --digital - Turn X and Y axis values into digital instead of analog values. Useful for BMS simulators.
         --help - Display this help message
 ```
